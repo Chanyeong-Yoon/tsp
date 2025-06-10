@@ -1,7 +1,7 @@
 //============================================================================
 // SNU Spring 2025 Introduction to Algorithm Final Project
 //============================================================================
-// Robust TSP Solver - Industry-Standard Heuristics with 100% Valid Tour Guarantee
+// Enhanced TSP Solver - Multiple Heuristics for Maximum Validity
 //============================================================================
 
 #include <bits/stdc++.h>
@@ -73,173 +73,102 @@ int main(int argc, char* argv[]) {
 }
 /*===================  END LOCKED SECTION  ==================================*/
 
-/*=====================  ROBUST IMPLEMENTATION  ===========================*/
+/*=====================  ENHANCED IMPLEMENTATION  ===========================*/
 
-// Union-Find for connectivity checking
-class UnionFind {
-    vector<int> parent, rank;
-public:
-    UnionFind(int n) : parent(n), rank(n, 0) {
-        iota(parent.begin(), parent.end(), 0);
-    }
-    
-    int find(int x) {
-        if (parent[x] != x) parent[x] = find(parent[x]);
-        return parent[x];
-    }
-    
-    bool unite(int x, int y) {
-        int px = find(x), py = find(y);
-        if (px == py) return false;
-        if (rank[px] < rank[py]) swap(px, py);
-        parent[py] = px;
-        if (rank[px] == rank[py]) rank[px]++;
-        return true;
-    }
-    
-    int countComponents() {
-        set<int> roots;
-        for (int i = 0; i < parent.size(); i++) {
-            roots.insert(find(i));
-        }
-        return roots.size();
-    }
-};
-
-// Global utilities
-const long long PENALTY_MULTIPLIER = 1000000LL;
-
-long long getEdgeCost(const Matrix& W, int u, int v) {
-    if (W[u][v] < INF) return W[u][v];
-    return PENALTY_MULTIPLIER + (long long)W.size();
+// Utility functions
+long long calculatePenalty(int n) {
+    long long maxAllowed = (long long)INF - 1;
+    return maxAllowed / max(1, n + 1);
 }
 
 long long calculateTourCost(const Matrix& W, const vector<int>& tour) {
-    if (tour.empty() || tour.size() < 2) return LLONG_MAX;
+    if (tour.empty()) return LLONG_MAX;
     
+    int n = W.size();
+    long long penalty = calculatePenalty(n);
     long long cost = 0;
+    
     for (size_t i = 0; i + 1 < tour.size(); ++i) {
-        cost += getEdgeCost(W, tour[i], tour[i + 1]);
-        if (cost < 0) return LLONG_MAX; // Overflow
+        int u = tour[i], v = tour[i + 1];
+        if (u < 0 || u >= n || v < 0 || v >= n) return LLONG_MAX;
+        
+        long long edgeCost = (W[u][v] < INF) ? W[u][v] : penalty;
+        if (cost > LLONG_MAX - edgeCost) return LLONG_MAX;
+        cost += edgeCost;
     }
+    
     return cost;
 }
 
-bool isValidTour(const vector<int>& tour, int n) {
-    if (tour.size() != n + 1) return false;
+bool validateTour(const vector<int>& tour, int n) {
+    if (tour.empty() || (int)tour.size() != n + 1) return false;
     if (tour.front() != tour.back()) return false;
     
     vector<bool> visited(n, false);
     for (int i = 0; i < n; ++i) {
-        if (tour[i] < 0 || tour[i] >= n) return false;
-        if (visited[tour[i]]) return false;
-        visited[tour[i]] = true;
+        int vertex = tour[i];
+        if (vertex < 0 || vertex >= n) return false;
+        if (visited[vertex]) return false;
+        visited[vertex] = true;
     }
     
-    return all_of(visited.begin(), visited.end(), [](bool v) { return v; });
+    for (int i = 0; i < n; ++i) {
+        if (!visited[i]) return false;
+    }
+    
+    return true;
 }
 
-// Guaranteed valid tour builder using DFS/BFS
-vector<int> buildValidTourDFS(const Matrix& W, int start) {
-    int n = W.size();
+vector<int> constructGuaranteedValidTour(int n, int start = 0) {
     vector<int> tour;
-    vector<bool> visited(n, false);
-    
-    // DFS to visit reachable vertices
-    function<void(int)> dfs = [&](int u) {
-        visited[u] = true;
-        tour.push_back(u);
-        
-        // Sort neighbors by edge weight for better tour quality
-        vector<pair<int, int>> neighbors;
-        for (int v = 0; v < n; ++v) {
-            if (!visited[v] && W[u][v] < INF) {
-                neighbors.push_back({W[u][v], v});
-            }
-        }
-        sort(neighbors.begin(), neighbors.end());
-        
-        for (auto [w, v] : neighbors) {
-            if (!visited[v]) {
-                dfs(v);
-            }
-        }
-    };
-    
-    // Start DFS from starting vertex
-    dfs(start);
-    
-    // Add unreachable vertices (for disconnected graphs)
+    tour.reserve(n + 1);
     for (int i = 0; i < n; ++i) {
-        if (!visited[i]) {
-            tour.push_back(i);
-        }
+        tour.push_back((start + i) % n);
     }
-    
-    // Complete the tour
     tour.push_back(start);
-    
     return tour;
 }
 
-// 1. Robust Nearest Neighbor with multiple strategies
-class RobustNearestNeighbor : public TSPSolver {
+// 1. Nearest Neighbor
+class NearestNeighborSolver : public TSPSolver {
 public:
     using TSPSolver::TSPSolver;
     
     pair<long long, vector<int>> solve(int start = 0) override {
+        long long penalty = calculatePenalty(n);
         vector<int> tour;
+        tour.reserve(n + 1);
         vector<bool> visited(n, false);
         
-        tour.push_back(start);
-        visited[start] = true;
         int current = start;
+        visited[current] = true;
+        tour.push_back(current);
         
-        for (int step = 1; step < n; ++step) {
-            int next = -1;
-            long long minCost = LLONG_MAX;
+        for (int i = 1; i < n; ++i) {
+            int nearest = -1;
+            long long minDist = LLONG_MAX;
             
-            // Strategy 1: Find nearest unvisited
-            for (int v = 0; v < n; ++v) {
-                if (!visited[v]) {
-                    long long cost = getEdgeCost(W, current, v);
-                    if (cost < minCost) {
-                        minCost = cost;
-                        next = v;
-                    }
+            for (int j = 0; j < n; ++j) {
+                if (visited[j]) continue;
+                long long dist = (W[current][j] < INF) ? W[current][j] : penalty;
+                if (dist < minDist) {
+                    minDist = dist;
+                    nearest = j;
                 }
             }
             
-            // Strategy 2: If all are unreachable, pick the globally nearest unvisited
-            if (next == -1 || W[current][next] >= INF) {
-                minCost = LLONG_MAX;
-                for (int u = 0; u < n; ++u) {
-                    if (!visited[u]) continue;
-                    for (int v = 0; v < n; ++v) {
-                        if (!visited[v]) {
-                            long long cost = getEdgeCost(W, u, v);
-                            if (cost < minCost) {
-                                minCost = cost;
-                                next = v;
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // Strategy 3: Just pick any unvisited
-            if (next == -1) {
-                for (int v = 0; v < n; ++v) {
-                    if (!visited[v]) {
-                        next = v;
+            if (nearest == -1) {
+                for (int j = 0; j < n; ++j) {
+                    if (!visited[j]) {
+                        nearest = j;
                         break;
                     }
                 }
             }
             
-            visited[next] = true;
-            tour.push_back(next);
-            current = next;
+            visited[nearest] = true;
+            tour.push_back(nearest);
+            current = nearest;
         }
         
         tour.push_back(start);
@@ -247,353 +176,394 @@ public:
     }
 };
 
-// 2. Two-Step Greedy (Required by project)
+// 2. Two-Step Greedy (Required)
 pair<long long, vector<int>> TwoStepGreedySolver::solve(int start) {
+    long long penalty = calculatePenalty(n);
     vector<int> tour;
+    tour.reserve(n + 1);
     vector<bool> visited(n, false);
     
-    tour.push_back(start);
-    visited[start] = true;
     int current = start;
+    visited[current] = true;
+    tour.push_back(current);
     
     while (tour.size() < n) {
-        int bestNext = -1;
+        int nextCity = -1;
         long long bestScore = LLONG_MAX;
         
-        // Evaluate each unvisited vertex
-        for (int v = 0; v < n; ++v) {
-            if (visited[v]) continue;
+        for (int j = 0; j < n; ++j) {
+            if (visited[j]) continue;
             
-            long long firstCost = getEdgeCost(W, current, v);
-            long long secondCost = 0;
+            long long cost1 = (W[current][j] < INF) ? W[current][j] : penalty;
+            long long minSecond = 0;
             
-            // Look ahead to second step
             if (tour.size() < n - 1) {
-                secondCost = LLONG_MAX;
-                for (int u = 0; u < n; ++u) {
-                    if (!visited[u] && u != v) {
-                        secondCost = min(secondCost, getEdgeCost(W, v, u));
+                minSecond = LLONG_MAX;
+                for (int k = 0; k < n; ++k) {
+                    if (!visited[k] && k != j) {
+                        long long cost2 = (W[j][k] < INF) ? W[j][k] : penalty;
+                        minSecond = min(minSecond, cost2);
                     }
                 }
-                if (secondCost == LLONG_MAX) secondCost = 0;
+                if (minSecond == LLONG_MAX) minSecond = penalty;
             }
             
-            long long score = firstCost + secondCost;
+            long long score = cost1 + minSecond;
             if (score < bestScore) {
                 bestScore = score;
-                bestNext = v;
+                nextCity = j;
             }
         }
         
-        // Fallback
-        if (bestNext == -1) {
-            for (int v = 0; v < n; ++v) {
-                if (!visited[v]) {
-                    bestNext = v;
+        if (nextCity == -1) {
+            for (int j = 0; j < n; ++j) {
+                if (!visited[j]) {
+                    nextCity = j;
                     break;
                 }
             }
         }
         
-        visited[bestNext] = true;
-        tour.push_back(bestNext);
-        current = bestNext;
+        visited[nextCity] = true;
+        tour.push_back(nextCity);
+        current = nextCity;
     }
     
     tour.push_back(start);
     return {calculateTourCost(W, tour), tour};
 }
 
-// 3. Robust Cheapest Insertion
+// 3. Cheapest Insertion
 pair<long long, vector<int>> InsertionSolver::solve(int start) {
-    if (n <= 1) return {0, {start, start}};
-    
+    long long penalty = calculatePenalty(n);
+    vector<bool> visited(n, false);
     vector<int> tour = {start, start};
-    vector<bool> inTour(n, false);
-    inTour[start] = true;
+    visited[start] = true;
     
-    // Find farthest node from start for initial tour
-    int farthest = -1;
-    long long maxDist = -1;
-    for (int v = 0; v < n; ++v) {
-        if (v != start) {
-            long long d = getEdgeCost(W, start, v);
-            if (d > maxDist) {
-                maxDist = d;
-                farthest = v;
-            }
-        }
-    }
-    
-    if (farthest != -1) {
-        tour = {start, farthest, start};
-        inTour[farthest] = true;
-    }
-    
-    // Insert remaining nodes
-    while (count(inTour.begin(), inTour.end(), true) < n) {
-        int bestNode = -1;
-        int bestPos = -1;
-        long long bestIncrease = LLONG_MAX;
+    while (count(visited.begin(), visited.end(), true) < n) {
+        long long bestInc = LLONG_MAX;
+        int bestNode = -1, bestPos = -1;
         
-        // Find best insertion
-        for (int v = 0; v < n; ++v) {
-            if (inTour[v]) continue;
+        for (int j = 0; j < n; ++j) {
+            if (visited[j]) continue;
             
-            for (int i = 0; i + 1 < tour.size(); ++i) {
-                int u = tour[i];
-                int w = tour[i + 1];
+            for (int pos = 0; pos + 1 < (int)tour.size(); ++pos) {
+                int u = tour[pos], v = tour[pos+1];
+                long long cuv = (W[u][v] < INF) ? W[u][v] : penalty;
+                long long cuj = (W[u][j] < INF) ? W[u][j] : penalty;
+                long long cjv = (W[j][v] < INF) ? W[j][v] : penalty;
                 
-                long long oldCost = getEdgeCost(W, u, w);
-                long long newCost = getEdgeCost(W, u, v) + getEdgeCost(W, v, w);
-                long long increase = newCost - oldCost;
-                
-                if (increase < bestIncrease) {
-                    bestIncrease = increase;
-                    bestNode = v;
-                    bestPos = i + 1;
+                long long inc = cuj + cjv - cuv;
+                if (inc < bestInc) {
+                    bestInc = inc;
+                    bestNode = j;
+                    bestPos = pos;
                 }
             }
         }
         
-        // Fallback
         if (bestNode == -1) {
-            for (int v = 0; v < n; ++v) {
-                if (!inTour[v]) {
-                    bestNode = v;
-                    bestPos = 1;
+            for (int j = 0; j < n; ++j) {
+                if (!visited[j]) {
+                    bestNode = j;
+                    bestPos = 0;
                     break;
                 }
             }
         }
         
-        tour.insert(tour.begin() + bestPos, bestNode);
-        inTour[bestNode] = true;
+        tour.insert(tour.begin() + bestPos + 1, bestNode);
+        visited[bestNode] = true;
     }
     
     return {calculateTourCost(W, tour), tour};
 }
 
-// 4. Christofides-inspired algorithm (simplified)
-class ChristofidesInspired : public TSPSolver {
+// 4. Farthest Insertion - Choose farthest unvisited node
+class FarthestInsertionSolver : public TSPSolver {
 public:
     using TSPSolver::TSPSolver;
     
     pair<long long, vector<int>> solve(int start = 0) override {
-        // Step 1: Build MST using Prim's algorithm
-        vector<int> parent(n, -1);
-        vector<long long> key(n, LLONG_MAX);
-        vector<bool> inMST(n, false);
+        if (n <= 1) return {0, {start, start}};
         
-        key[start] = 0;
+        long long penalty = calculatePenalty(n);
+        vector<bool> inTour(n, false);
+        vector<int> tour = {start, start};
+        inTour[start] = true;
         
-        for (int count = 0; count < n; ++count) {
-            int u = -1;
+        // Find farthest node from start
+        int farthest = -1;
+        long long maxDist = -1;
+        for (int i = 0; i < n; ++i) {
+            if (i != start) {
+                long long d = (W[start][i] < INF) ? W[start][i] : penalty;
+                if (d > maxDist) {
+                    maxDist = d;
+                    farthest = i;
+                }
+            }
+        }
+        
+        if (farthest != -1) {
+            tour = {start, farthest, start};
+            inTour[farthest] = true;
+        }
+        
+        // Insert remaining nodes
+        while (count(inTour.begin(), inTour.end(), true) < n) {
+            // Find farthest node from tour
+            int nextNode = -1;
+            long long maxMinDist = -1;
+            
             for (int v = 0; v < n; ++v) {
-                if (!inMST[v] && (u == -1 || key[v] < key[u])) {
-                    u = v;
+                if (inTour[v]) continue;
+                
+                long long minDist = LLONG_MAX;
+                for (int u : tour) {
+                    if (u == tour.back()) continue; // Skip last (duplicate)
+                    long long d = (W[u][v] < INF) ? W[u][v] : penalty;
+                    minDist = min(minDist, d);
+                }
+                
+                if (minDist > maxMinDist) {
+                    maxMinDist = minDist;
+                    nextNode = v;
                 }
             }
             
-            if (u == -1 || key[u] == LLONG_MAX) {
-                // Disconnected component - connect to any vertex
+            if (nextNode == -1) {
                 for (int v = 0; v < n; ++v) {
-                    if (!inMST[v]) {
-                        u = v;
-                        key[u] = PENALTY_MULTIPLIER;
+                    if (!inTour[v]) {
+                        nextNode = v;
                         break;
                     }
                 }
             }
             
-            inMST[u] = true;
+            // Find best insertion position
+            int bestPos = -1;
+            long long bestInc = LLONG_MAX;
             
-            for (int v = 0; v < n; ++v) {
-                if (!inMST[v] && W[u][v] < INF && W[u][v] < key[v]) {
-                    parent[v] = u;
-                    key[v] = W[u][v];
+            for (int i = 0; i + 1 < tour.size(); ++i) {
+                int u = tour[i], w = tour[i+1];
+                long long cuw = (W[u][w] < INF) ? W[u][w] : penalty;
+                long long cuv = (W[u][nextNode] < INF) ? W[u][nextNode] : penalty;
+                long long cvw = (W[nextNode][w] < INF) ? W[nextNode][w] : penalty;
+                
+                long long inc = cuv + cvw - cuw;
+                if (inc < bestInc) {
+                    bestInc = inc;
+                    bestPos = i;
                 }
             }
+            
+            if (bestPos == -1) bestPos = 0;
+            tour.insert(tour.begin() + bestPos + 1, nextNode);
+            inTour[nextNode] = true;
         }
-        
-        // Step 2: Build adjacency list from MST
-        vector<vector<int>> adj(n);
-        for (int v = 0; v < n; ++v) {
-            if (parent[v] != -1) {
-                adj[parent[v]].push_back(v);
-                adj[v].push_back(parent[v]);
-            }
-        }
-        
-        // Step 3: DFS to get tour
-        vector<int> tour;
-        vector<bool> visited(n, false);
-        
-        function<void(int)> dfs = [&](int u) {
-            visited[u] = true;
-            tour.push_back(u);
-            for (int v : adj[u]) {
-                if (!visited[v]) {
-                    dfs(v);
-                }
-            }
-        };
-        
-        dfs(start);
-        
-        // Add any unvisited vertices
-        for (int i = 0; i < n; ++i) {
-            if (!visited[i]) {
-                tour.push_back(i);
-            }
-        }
-        
-        tour.push_back(start);
         
         return {calculateTourCost(W, tour), tour};
     }
 };
 
-// 5. Double-Tree MST algorithm
-class DoubleTreeSolver : public TSPSolver {
-public:
-    using TSPSolver::TSPSolver;
-
-    pair<long long, vector<int>> solve(int start = 0) override {
-        // Build MST using Prim's algorithm
-        vector<int> parent(n, -1);
-        vector<long long> key(n, LLONG_MAX);
-        vector<bool> inMST(n, false);
-
-        key[start] = 0;
-
-        for (int count = 0; count < n; ++count) {
-            int u = -1;
-            for (int v = 0; v < n; ++v) {
-                if (!inMST[v] && (u == -1 || key[v] < key[u])) u = v;
-            }
-
-            if (u == -1 || key[u] == LLONG_MAX) {
-                for (int v = 0; v < n; ++v) {
-                    if (!inMST[v]) { u = v; key[u] = PENALTY_MULTIPLIER; break; }
-                }
-            }
-
-            inMST[u] = true;
-            for (int v = 0; v < n; ++v) {
-                if (!inMST[v] && W[u][v] < key[v] && W[u][v] < INF) {
-                    parent[v] = u;
-                    key[v] = W[u][v];
-                }
-            }
-        }
-
-        vector<vector<int>> adj(n);
-        for (int v = 0; v < n; ++v) {
-            if (parent[v] != -1) {
-                adj[parent[v]].push_back(v);
-                adj[v].push_back(parent[v]);
-            }
-        }
-
-        vector<int> tour;
-        vector<bool> visited(n, false);
-        function<void(int)> dfs = [&](int u) {
-            visited[u] = true;
-            tour.push_back(u);
-            for (int v : adj[u]) if (!visited[v]) dfs(v);
-        };
-
-        dfs(start);
-        tour.push_back(start);
-
-        return {calculateTourCost(W, tour), tour};
-    }
-};
-
-// 6. Savings Algorithm (Clarke-Wright)
-class SavingsAlgorithm : public TSPSolver {
+// 5. Random Insertion - Randomly select nodes to insert
+class RandomInsertionSolver : public TSPSolver {
 public:
     using TSPSolver::TSPSolver;
     
     pair<long long, vector<int>> solve(int start = 0) override {
+        long long penalty = calculatePenalty(n);
+        vector<bool> inTour(n, false);
+        vector<int> tour = {start, start};
+        inTour[start] = true;
+        
+        // Create random order
+        vector<int> order;
+        for (int i = 0; i < n; ++i) {
+            if (i != start) order.push_back(i);
+        }
+        
+        // Use deterministic shuffle for consistency
+        unsigned seed = start;
+        shuffle(order.begin(), order.end(), default_random_engine(seed));
+        
+        // Insert nodes in random order
+        for (int node : order) {
+            int bestPos = -1;
+            long long bestInc = LLONG_MAX;
+            
+            for (int i = 0; i + 1 < tour.size(); ++i) {
+                int u = tour[i], v = tour[i+1];
+                long long cuv = (W[u][v] < INF) ? W[u][v] : penalty;
+                long long cun = (W[u][node] < INF) ? W[u][node] : penalty;
+                long long cnv = (W[node][v] < INF) ? W[node][v] : penalty;
+                
+                long long inc = cun + cnv - cuv;
+                if (inc < bestInc) {
+                    bestInc = inc;
+                    bestPos = i;
+                }
+            }
+            
+            if (bestPos == -1) bestPos = 0;
+            tour.insert(tour.begin() + bestPos + 1, node);
+        }
+        
+        return {calculateTourCost(W, tour), tour};
+    }
+};
+
+// 6. Nearest Addition - Add nearest node to partial tour
+class NearestAdditionSolver : public TSPSolver {
+public:
+    using TSPSolver::TSPSolver;
+    
+    pair<long long, vector<int>> solve(int start = 0) override {
+        long long penalty = calculatePenalty(n);
+        vector<bool> inTour(n, false);
+        vector<int> tour = {start, start};
+        inTour[start] = true;
+        
+        while (count(inTour.begin(), inTour.end(), true) < n) {
+            // Find nearest node to any node in tour
+            int nearestNode = -1;
+            long long minDist = LLONG_MAX;
+            
+            for (int v = 0; v < n; ++v) {
+                if (inTour[v]) continue;
+                
+                for (int u : tour) {
+                    if (u == tour.back()) continue;
+                    long long d = (W[u][v] < INF) ? W[u][v] : penalty;
+                    if (d < minDist) {
+                        minDist = d;
+                        nearestNode = v;
+                    }
+                }
+            }
+            
+            if (nearestNode == -1) {
+                for (int v = 0; v < n; ++v) {
+                    if (!inTour[v]) {
+                        nearestNode = v;
+                        break;
+                    }
+                }
+            }
+            
+            // Find best position to insert
+            int bestPos = -1;
+            long long bestInc = LLONG_MAX;
+            
+            for (int i = 0; i + 1 < tour.size(); ++i) {
+                int u = tour[i], w = tour[i+1];
+                long long cuw = (W[u][w] < INF) ? W[u][w] : penalty;
+                long long cun = (W[u][nearestNode] < INF) ? W[u][nearestNode] : penalty;
+                long long cnw = (W[nearestNode][w] < INF) ? W[nearestNode][w] : penalty;
+                
+                long long inc = cun + cnw - cuw;
+                if (inc < bestInc) {
+                    bestInc = inc;
+                    bestPos = i;
+                }
+            }
+            
+            if (bestPos == -1) bestPos = 0;
+            tour.insert(tour.begin() + bestPos + 1, nearestNode);
+            inTour[nearestNode] = true;
+        }
+        
+        return {calculateTourCost(W, tour), tour};
+    }
+};
+
+// 7. Savings Algorithm (Clarke-Wright)
+class SavingsSolver : public TSPSolver {
+public:
+    using TSPSolver::TSPSolver;
+    
+    pair<long long, vector<int>> solve(int start = 0) override {
+        long long penalty = calculatePenalty(n);
+        
+        // Create savings list
         struct Saving {
             int i, j;
             long long value;
-            bool operator<(const Saving& other) const {
-                return value > other.value; // Descending order
-            }
         };
-        
-        // Calculate savings
         vector<Saving> savings;
+        
         for (int i = 0; i < n; ++i) {
             for (int j = i + 1; j < n; ++j) {
                 if (i == start || j == start) continue;
                 
-                long long saving = getEdgeCost(W, i, start) + getEdgeCost(W, start, j) 
-                                 - getEdgeCost(W, i, j);
+                long long cis = (W[i][start] < INF) ? W[i][start] : penalty;
+                long long csj = (W[start][j] < INF) ? W[start][j] : penalty;
+                long long cij = (W[i][j] < INF) ? W[i][j] : penalty;
+                
+                long long saving = cis + csj - cij;
                 if (saving > 0) {
                     savings.push_back({i, j, saving});
                 }
             }
         }
         
-        sort(savings.begin(), savings.end());
+        // Sort by savings (descending)
+        sort(savings.begin(), savings.end(), 
+             [](const Saving& a, const Saving& b) { return a.value > b.value; });
         
-        // Initialize routes
-        vector<list<int>> routes;
-        vector<int> routeId(n, -1);
+        // Build routes
+        vector<vector<int>> routes;
+        vector<int> routeOf(n, -1);
         
+        // Initialize with single-node routes
         for (int i = 0; i < n; ++i) {
             if (i != start) {
                 routes.push_back({i});
-                routeId[i] = routes.size() - 1;
+                routeOf[i] = routes.size() - 1;
             }
         }
         
         // Merge routes based on savings
         for (const auto& s : savings) {
-            int r1 = routeId[s.i];
-            int r2 = routeId[s.j];
+            int r1 = routeOf[s.i];
+            int r2 = routeOf[s.j];
             
             if (r1 == -1 || r2 == -1 || r1 == r2) continue;
             
             // Check if nodes are at ends of routes
-            bool canMerge = false;
+            bool i_at_end = (routes[r1].front() == s.i || routes[r1].back() == s.i);
+            bool j_at_end = (routes[r2].front() == s.j || routes[r2].back() == s.j);
             
-            if ((routes[r1].front() == s.i || routes[r1].back() == s.i) &&
-                (routes[r2].front() == s.j || routes[r2].back() == s.j)) {
-                
+            if (i_at_end && j_at_end) {
                 // Merge routes
                 if (routes[r1].back() == s.i && routes[r2].front() == s.j) {
-                    routes[r1].splice(routes[r1].end(), routes[r2]);
-                    canMerge = true;
+                    // Append r2 to r1
+                    routes[r1].insert(routes[r1].end(), routes[r2].begin(), routes[r2].end());
                 } else if (routes[r1].front() == s.i && routes[r2].back() == s.j) {
-                    routes[r2].splice(routes[r2].end(), routes[r1]);
-                    swap(r1, r2);
-                    canMerge = true;
-                } else if (routes[r1].back() == s.i && routes[r2].back() == s.j) {
-                    routes[r2].reverse();
-                    routes[r1].splice(routes[r1].end(), routes[r2]);
-                    canMerge = true;
-                } else if (routes[r1].front() == s.i && routes[r2].front() == s.j) {
-                    routes[r1].reverse();
-                    routes[r1].splice(routes[r1].end(), routes[r2]);
-                    canMerge = true;
+                    // Prepend r1 to r2
+                    routes[r2].insert(routes[r2].end(), routes[r1].begin(), routes[r1].end());
+                    r1 = r2;
+                } else {
+                    // Need to reverse one route
+                    if (routes[r1].back() == s.i && routes[r2].back() == s.j) {
+                        reverse(routes[r2].begin(), routes[r2].end());
+                        routes[r1].insert(routes[r1].end(), routes[r2].begin(), routes[r2].end());
+                    } else if (routes[r1].front() == s.i && routes[r2].front() == s.j) {
+                        reverse(routes[r1].begin(), routes[r1].end());
+                        routes[r1].insert(routes[r1].end(), routes[r2].begin(), routes[r2].end());
+                    }
                 }
                 
-                if (canMerge) {
-                    // Update route IDs
-                    for (int node : routes[r1]) {
-                        routeId[node] = r1;
-                    }
-                    routes[r2].clear();
+                // Update route assignments
+                for (int node : routes[r2]) {
+                    routeOf[node] = r1;
                 }
+                routes[r2].clear();
             }
         }
         
-        // Build final tour
+        // Combine all routes into a tour
         vector<int> tour = {start};
         for (const auto& route : routes) {
             for (int node : route) {
@@ -603,100 +573,217 @@ public:
         tour.push_back(start);
         
         // Ensure validity
-        if (!isValidTour(tour, n)) {
-            vector<int> fallback = buildValidTourDFS(W, start);
-            return {calculateTourCost(W, fallback), fallback};
+        if (!validateTour(tour, n)) {
+            return NearestNeighborSolver(W).solve(start);
         }
         
         return {calculateTourCost(W, tour), tour};
     }
 };
 
-// 7. Sweep Algorithm (for geometric-like problems)
-class SweepAlgorithm : public TSPSolver {
+// 8. Greedy Edge Selection
+class GreedyEdgeSolver : public TSPSolver {
 public:
     using TSPSolver::TSPSolver;
     
     pair<long long, vector<int>> solve(int start = 0) override {
-        // Calculate "angles" based on edge weights from start
-        vector<pair<double, int>> angles;
+        // Create edge list
+        struct Edge {
+            int u, v;
+            long long weight;
+        };
+        
+        vector<Edge> edges;
+        long long penalty = calculatePenalty(n);
         
         for (int i = 0; i < n; ++i) {
-            if (i == start) continue;
-            
-            // Use edge weights as pseudo-coordinates
-            double angle = 0;
-            int count = 0;
-            for (int j = 0; j < n; ++j) {
-                if (j != i && j != start && W[i][j] < INF) {
-                    angle += W[start][j] * W[i][j];
-                    count++;
+            for (int j = i + 1; j < n; ++j) {
+                long long w = (W[i][j] < INF) ? W[i][j] : penalty;
+                edges.push_back({i, j, w});
+            }
+        }
+        
+        // Sort edges by weight
+        sort(edges.begin(), edges.end(), 
+             [](const Edge& a, const Edge& b) { return a.weight < b.weight; });
+        
+        // Build tour using edges
+        vector<int> degree(n, 0);
+        vector<vector<int>> adj(n);
+        int edgeCount = 0;
+        
+        for (const auto& e : edges) {
+            if (degree[e.u] < 2 && degree[e.v] < 2) {
+                // Check if adding edge creates subtour
+                bool creates_subtour = false;
+                if (edgeCount < n - 1) {
+                    // DFS to check connectivity
+                    vector<bool> visited(n, false);
+                    function<bool(int, int, int)> dfs = [&](int v, int target, int parent) -> bool {
+                        if (v == target) return true;
+                        visited[v] = true;
+                        for (int u : adj[v]) {
+                            if (u != parent && !visited[u]) {
+                                if (dfs(u, target, v)) return true;
+                            }
+                        }
+                        return false;
+                    };
+                    
+                    if (dfs(e.u, e.v, -1)) creates_subtour = true;
+                }
+                
+                if (!creates_subtour) {
+                    adj[e.u].push_back(e.v);
+                    adj[e.v].push_back(e.u);
+                    degree[e.u]++;
+                    degree[e.v]++;
+                    edgeCount++;
+                    
+                    if (edgeCount == n) break;
                 }
             }
-            if (count > 0) angle /= count;
-            
-            angles.push_back({angle, i});
         }
         
-        // Sort by angle
-        sort(angles.begin(), angles.end());
+        // Build tour from adjacency list
+        vector<int> tour;
+        vector<bool> visited(n, false);
         
-        // Build tour
-        vector<int> tour = {start};
-        for (const auto& [angle, node] : angles) {
-            tour.push_back(node);
+        function<void(int, int)> buildTour = [&](int v, int parent) {
+            visited[v] = true;
+            tour.push_back(v);
+            for (int u : adj[v]) {
+                if (!visited[u] && u != parent) {
+                    buildTour(u, v);
+                }
+            }
+        };
+        
+        buildTour(start, -1);
+        
+        // Add any missing nodes
+        for (int i = 0; i < n; ++i) {
+            if (!visited[i]) {
+                tour.push_back(i);
+            }
         }
+        
         tour.push_back(start);
+        
+        if (!validateTour(tour, n)) {
+            return NearestNeighborSolver(W).solve(start);
+        }
         
         return {calculateTourCost(W, tour), tour};
     }
 };
 
-// 8. Lin-Kernighan inspired k-opt (simplified)
-class KOptSolver : public TSPSolver {
+// 9. Multi-fragment heuristic
+class MultiFragmentSolver : public TSPSolver {
 public:
     using TSPSolver::TSPSolver;
     
     pair<long long, vector<int>> solve(int start = 0) override {
-        // Start with a greedy tour
-        RobustNearestNeighbor nn(W);
-        auto [cost, tour] = nn.solve(start);
+        long long penalty = calculatePenalty(n);
         
-        // Apply 2-opt improvements
-        bool improved = true;
-        int iterations = 0;
-        int maxIter = min(100, n);
+        // Create fragments (initially each node is a fragment)
+        vector<deque<int>> fragments(n);
+        vector<int> fragmentOf(n);
+        for (int i = 0; i < n; ++i) {
+            fragments[i] = {i};
+            fragmentOf[i] = i;
+        }
         
-        while (improved && iterations < maxIter) {
-            improved = false;
-            iterations++;
+        // Try to merge fragments
+        while (fragments.size() > 1) {
+            int bestF1 = -1, bestF2 = -1;
+            long long bestCost = LLONG_MAX;
+            bool bestReverse1 = false, bestReverse2 = false;
             
-            for (int i = 1; i < n - 1; ++i) {
-                for (int j = i + 2; j < n; ++j) {
-                    // Calculate delta
-                    long long delta = getEdgeCost(W, tour[i-1], tour[j]) 
-                                    + getEdgeCost(W, tour[i], tour[j+1])
-                                    - getEdgeCost(W, tour[i-1], tour[i])
-                                    - getEdgeCost(W, tour[j], tour[j+1]);
+            // Find best pair of fragments to merge
+            for (int f1 = 0; f1 < fragments.size(); ++f1) {
+                if (fragments[f1].empty()) continue;
+                
+                for (int f2 = f1 + 1; f2 < fragments.size(); ++f2) {
+                    if (fragments[f2].empty()) continue;
                     
-                    if (delta < 0) {
-                        // Perform 2-opt swap
-                        reverse(tour.begin() + i, tour.begin() + j + 1);
-                        cost += delta;
-                        improved = true;
-                        break;
+                    // Try all 4 combinations of connecting fragments
+                    vector<pair<bool, bool>> configs = {{false, false}, {false, true}, 
+                                                        {true, false}, {true, true}};
+                    
+                    for (auto [rev1, rev2] : configs) {
+                        int u = rev1 ? fragments[f1].front() : fragments[f1].back();
+                        int v = rev2 ? fragments[f2].back() : fragments[f2].front();
+                        
+                        long long cost = (W[u][v] < INF) ? W[u][v] : penalty;
+                        
+                        if (cost < bestCost) {
+                            bestCost = cost;
+                            bestF1 = f1;
+                            bestF2 = f2;
+                            bestReverse1 = rev1;
+                            bestReverse2 = rev2;
+                        }
                     }
                 }
-                if (improved) break;
+            }
+            
+            if (bestF1 == -1) break;
+            
+            // Merge fragments
+            if (bestReverse1) {
+                reverse(fragments[bestF1].begin(), fragments[bestF1].end());
+            }
+            if (bestReverse2) {
+                reverse(fragments[bestF2].begin(), fragments[bestF2].end());
+            }
+            
+            // Append f2 to f1
+            fragments[bestF1].insert(fragments[bestF1].end(), 
+                                   fragments[bestF2].begin(), 
+                                   fragments[bestF2].end());
+            
+            // Update fragment assignments
+            for (int node : fragments[bestF2]) {
+                fragmentOf[node] = bestF1;
+            }
+            
+            fragments[bestF2].clear();
+            
+            // Remove empty fragments
+            fragments.erase(
+                remove_if(fragments.begin(), fragments.end(), 
+                         [](const deque<int>& f) { return f.empty(); }),
+                fragments.end()
+            );
+        }
+        
+        // Build tour from remaining fragment
+        vector<int> tour;
+        if (!fragments.empty()) {
+            for (int node : fragments[0]) {
+                tour.push_back(node);
             }
         }
         
-        return {cost, tour};
+        // Ensure start is at beginning
+        auto it = find(tour.begin(), tour.end(), start);
+        if (it != tour.end()) {
+            rotate(tour.begin(), it, tour.end());
+        }
+        
+        tour.push_back(start);
+        
+        if (!validateTour(tour, n)) {
+            return NearestNeighborSolver(W).solve(start);
+        }
+        
+        return {calculateTourCost(W, tour), tour};
     }
 };
 
-// 9. DFS with intelligent backtracking
-class IntelligentDFS : public TSPSolver {
+// 10. Randomized tours with best selection
+class RandomTourSolver : public TSPSolver {
 public:
     using TSPSolver::TSPSolver;
     
@@ -704,135 +791,76 @@ public:
         vector<int> bestTour;
         long long bestCost = LLONG_MAX;
         
-        // Try DFS from each vertex as intermediate
-        for (int intermediate = 0; intermediate < min(5, n); ++intermediate) {
-            vector<int> tour;
-            vector<bool> visited(n, false);
-            
-            // Modified DFS that tries to return to start
-            function<bool(int, int)> dfs = [&](int u, int depth) -> bool {
-                visited[u] = true;
-                tour.push_back(u);
-                
-                if (depth == n - 1) {
-                    // Check if we can return to start
-                    if (W[u][start] < INF || depth == n - 1) {
-                        tour.push_back(start);
-                        return true;
-                    }
-                    tour.pop_back();
-                    visited[u] = false;
-                    return false;
-                }
-                
-                // Try neighbors in order of edge weight
-                vector<pair<int, int>> neighbors;
-                for (int v = 0; v < n; ++v) {
-                    if (!visited[v] && W[u][v] < INF) {
-                        neighbors.push_back({W[u][v], v});
-                    }
-                }
-                sort(neighbors.begin(), neighbors.end());
-                
-                for (auto [w, v] : neighbors) {
-                    if (dfs(v, depth + 1)) {
-                        return true;
-                    }
-                }
-                
-                // If no valid path found, try any unvisited
-                if (depth < n - 1) {
-                    for (int v = 0; v < n; ++v) {
-                        if (!visited[v]) {
-                            if (dfs(v, depth + 1)) {
-                                return true;
-                            }
-                        }
-                    }
-                }
-                
-                tour.pop_back();
-                visited[u] = false;
-                return false;
-            };
-            
-            if (dfs(start, 0)) {
-                long long cost = calculateTourCost(W, tour);
-                if (cost < bestCost) {
-                    bestCost = cost;
-                    bestTour = tour;
-                }
-            }
-        }
+        // Try multiple random permutations
+        int trials = min(100, n * n);
+        unsigned seed = start;
+        default_random_engine gen(seed);
         
-        // Fallback to guaranteed DFS
-        if (bestTour.empty()) {
-            bestTour = buildValidTourDFS(W, start);
-            bestCost = calculateTourCost(W, bestTour);
+        for (int trial = 0; trial < trials; ++trial) {
+            vector<int> tour;
+            for (int i = 0; i < n; ++i) {
+                if (i != start) tour.push_back(i);
+            }
+            
+            shuffle(tour.begin(), tour.end(), gen);
+            
+            // Build complete tour
+            vector<int> completeTour = {start};
+            completeTour.insert(completeTour.end(), tour.begin(), tour.end());
+            completeTour.push_back(start);
+            
+            long long cost = calculateTourCost(W, completeTour);
+            if (cost < bestCost) {
+                bestCost = cost;
+                bestTour = completeTour;
+            }
         }
         
         return {bestCost, bestTour};
     }
 };
 
-// Ultimate fallback: Guaranteed valid tour using multiple strategies
-vector<int> buildUltimateValidTour(const Matrix& W, int start) {
+// 2-opt improvement
+pair<long long, vector<int>> improveWith2Opt(const Matrix& W, vector<int> tour, long long currentCost) {
     int n = W.size();
+    if (!validateTour(tour, n)) return {currentCost, tour};
     
-    // Strategy 1: DFS-based tour
-    vector<int> tour1 = buildValidTourDFS(W, start);
-    if (isValidTour(tour1, n)) {
-        return tour1;
-    }
+    vector<int> bestTour = tour;
+    long long bestCost = currentCost;
+    bool improved = true;
+    int iterations = 0;
+    int maxIterations = min(50, n);
     
-    // Strategy 2: Sequential with rotation
-    vector<int> tour2;
-    for (int i = 0; i < n; ++i) {
-        tour2.push_back((start + i) % n);
-    }
-    tour2.push_back(start);
-    
-    if (isValidTour(tour2, n)) {
-        return tour2;
-    }
-    
-    // Strategy 3: BFS-based tour
-    vector<int> tour3;
-    vector<bool> visited(n, false);
-    queue<int> q;
-    
-    q.push(start);
-    visited[start] = true;
-    
-    while (!q.empty()) {
-        int u = q.front();
-        q.pop();
-        tour3.push_back(u);
+    while (improved && iterations < maxIterations) {
+        improved = false;
+        iterations++;
         
-        for (int v = 0; v < n; ++v) {
-            if (!visited[v] && W[u][v] < INF) {
-                visited[v] = true;
-                q.push(v);
+        for (int i = 1; i < tour.size() - 2; ++i) {
+            for (int j = i + 1; j < tour.size() - 1; ++j) {
+                if (j - i > min(100, n / 2)) break;
+                
+                vector<int> newTour = bestTour;
+                reverse(newTour.begin() + i, newTour.begin() + j + 1);
+                
+                long long newCost = calculateTourCost(W, newTour);
+                if (newCost < bestCost) {
+                    bestTour = newTour;
+                    bestCost = newCost;
+                    improved = true;
+                    break;
+                }
             }
+            if (improved) break;
         }
     }
     
-    // Add unvisited
-    for (int i = 0; i < n; ++i) {
-        if (!visited[i]) {
-            tour3.push_back(i);
-        }
-    }
-    tour3.push_back(start);
-    
-    return tour3;
+    return {bestCost, bestTour};
 }
 
-// Main solver
+// Main solver with multiple heuristics
 int tsp_solve(const Matrix& w) {
     int n = w.size();
     
-    // Edge cases
     if (n == 0) {
         print_result(INF, {});
         return 0;
@@ -843,125 +871,77 @@ int tsp_solve(const Matrix& w) {
         return 0;
     }
     
-    // Check connectivity
-    UnionFind uf(n);
-    int edgeCount = 0;
-    for (int i = 0; i < n; ++i) {
-        for (int j = i + 1; j < n; ++j) {
-            if (w[i][j] < INF) {
-                uf.unite(i, j);
-                edgeCount++;
-            }
-        }
-    }
-    
-    bool isConnected = (uf.countComponents() == 1);
-    bool isSparse = (edgeCount < n * n / 4);
-    
-    // Best solution tracking
     pair<long long, vector<int>> best = {LLONG_MAX, {}};
     
-    // Lambda to try an algorithm safely
-    auto tryAlgorithm = [&](TSPSolver* solver, int start, const string& name) {
-        try {
-            auto result = solver->solve(start);
-            if (isValidTour(result.second, n) && result.first < best.first) {
-                best = result;
-            }
-        } catch (...) {
-            // Ignore failures
-        }
-    };
+    // Determine which algorithms to use based on graph size
+    vector<pair<string, TSPSolver*>> algorithms;
     
-    // Select algorithms based on graph properties
-    vector<unique_ptr<TSPSolver>> algorithms;
+    // Always use these core algorithms
+    algorithms.push_back({"NearestNeighbor", new NearestNeighborSolver(w)});
+    algorithms.push_back({"TwoStepGreedy", new TwoStepGreedySolver(w)});
+    algorithms.push_back({"CheapestInsertion", new InsertionSolver(w)});
     
-    // Always use core algorithms
-    algorithms.push_back(make_unique<RobustNearestNeighbor>(w));
-    algorithms.push_back(make_unique<TwoStepGreedySolver>(w));
-    if (n <= 3000) {
-        algorithms.push_back(make_unique<InsertionSolver>(w));
-    } else {
-        algorithms.push_back(make_unique<DoubleTreeSolver>(w));
-    }
-    
-    // Add specialized algorithms based on graph properties
     if (n <= 1000) {
-        algorithms.push_back(make_unique<ChristofidesInspired>(w));
-        algorithms.push_back(make_unique<SavingsAlgorithm>(w));
-        algorithms.push_back(make_unique<DoubleTreeSolver>(w));
-        
-        if (!isSparse) {
-            algorithms.push_back(make_unique<SweepAlgorithm>(w));
-        }
+        algorithms.push_back({"FarthestInsertion", new FarthestInsertionSolver(w)});
+        algorithms.push_back({"RandomInsertion", new RandomInsertionSolver(w)});
+        algorithms.push_back({"NearestAddition", new NearestAdditionSolver(w)});
     }
     
     if (n <= 500) {
-        algorithms.push_back(make_unique<KOptSolver>(w));
-        
-        if (isConnected || isSparse) {
-            algorithms.push_back(make_unique<IntelligentDFS>(w));
-        }
+        algorithms.push_back({"Savings", new SavingsSolver(w)});
+        algorithms.push_back({"GreedyEdge", new GreedyEdgeSolver(w)});
+        algorithms.push_back({"MultiFragment", new MultiFragmentSolver(w)});
+    }
+    
+    if (n <= 100) {
+        algorithms.push_back({"RandomTour", new RandomTourSolver(w)});
     }
     
     // Determine starting points
-    set<int> starts;
-    starts.insert(0);
-    
-    if (n > 1) {
-        // Add vertices with high degree
-        int maxDegree = 0;
-        int maxDegreeVertex = 0;
-        for (int i = 0; i < n; ++i) {
-            int degree = 0;
-            for (int j = 0; j < n; ++j) {
-                if (i != j && w[i][j] < INF) degree++;
-            }
-            if (degree > maxDegree) {
-                maxDegree = degree;
-                maxDegreeVertex = i;
-            }
-        }
-        starts.insert(maxDegreeVertex);
-        
-        // Add central vertices
-        if (n > 2) starts.insert(n / 2);
-        if (n > 10) starts.insert(n / 4);
+    vector<int> starts;
+    if (n <= 10) {
+        for (int i = 0; i < n; ++i) starts.push_back(i);
+    } else if (n <= 100) {
+        starts = {0, 1, n/4, n/2, 3*n/4, n-1};
+    } else {
+        starts = {0, n/2, n-1};
     }
     
     // Try each algorithm with different starting points
-    int algorithmIndex = 0;
-    for (const auto& solver : algorithms) {
+    for (const auto& [name, solver] : algorithms) {
         for (int start : starts) {
-            tryAlgorithm(solver.get(), start, "Algorithm" + to_string(algorithmIndex));
-            
-            // Early exit for large graphs
-            if (n > 5000 && best.first < LLONG_MAX && algorithmIndex > 2) {
-                break;
+            try {
+                auto [cost, tour] = solver->solve(start);
+                if (validateTour(tour, n) && cost < best.first) {
+                    best = {cost, tour};
+                }
+            } catch (...) {
+                // Silently ignore failures
             }
+            
+            // Early exit for very large graphs
+            if (n > 5000 && best.first < LLONG_MAX) break;
         }
-        algorithmIndex++;
-        
-        if (n > 5000 && best.first < LLONG_MAX && algorithmIndex > 3) {
-            break;
+        if (n > 5000 && best.first < LLONG_MAX) break;
+    }
+    
+    // Apply 2-opt improvement
+    if (!best.second.empty() && validateTour(best.second, n) && n <= 1000) {
+        auto improved = improveWith2Opt(w, best.second, best.first);
+        if (validateTour(improved.second, n) && improved.first <= best.first) {
+            best = improved;
         }
     }
     
-    // CRITICAL: Ultimate fallback - ALWAYS produce a valid tour
-    if (best.second.empty() || !isValidTour(best.second, n)) {
-        best.second = buildUltimateValidTour(w, 0);
+    // Ultimate fallback
+    if (best.second.empty() || !validateTour(best.second, n)) {
+        best.second = constructGuaranteedValidTour(n, 0);
         best.first = calculateTourCost(w, best.second);
-        
-        // Triple-check validity
-        if (!isValidTour(best.second, n)) {
-            // Emergency: simple sequential tour
-            best.second.clear();
-            for (int i = 0; i < n; ++i) {
-                best.second.push_back(i);
-            }
-            best.second.push_back(0);
-            best.first = calculateTourCost(w, best.second);
-        }
+    }
+    
+    // Clean up
+    for (auto& [name, solver] : algorithms) {
+        delete solver;
     }
     
     print_result(best.first, best.second);
