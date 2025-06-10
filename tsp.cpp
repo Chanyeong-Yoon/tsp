@@ -454,7 +454,64 @@ public:
     }
 };
 
-// 5. Savings Algorithm (Clarke-Wright)
+// 5. Double-Tree MST algorithm
+class DoubleTreeSolver : public TSPSolver {
+public:
+    using TSPSolver::TSPSolver;
+
+    pair<long long, vector<int>> solve(int start = 0) override {
+        // Build MST using Prim's algorithm
+        vector<int> parent(n, -1);
+        vector<long long> key(n, LLONG_MAX);
+        vector<bool> inMST(n, false);
+
+        key[start] = 0;
+
+        for (int count = 0; count < n; ++count) {
+            int u = -1;
+            for (int v = 0; v < n; ++v) {
+                if (!inMST[v] && (u == -1 || key[v] < key[u])) u = v;
+            }
+
+            if (u == -1 || key[u] == LLONG_MAX) {
+                for (int v = 0; v < n; ++v) {
+                    if (!inMST[v]) { u = v; key[u] = PENALTY_MULTIPLIER; break; }
+                }
+            }
+
+            inMST[u] = true;
+            for (int v = 0; v < n; ++v) {
+                if (!inMST[v] && W[u][v] < key[v] && W[u][v] < INF) {
+                    parent[v] = u;
+                    key[v] = W[u][v];
+                }
+            }
+        }
+
+        vector<vector<int>> adj(n);
+        for (int v = 0; v < n; ++v) {
+            if (parent[v] != -1) {
+                adj[parent[v]].push_back(v);
+                adj[v].push_back(parent[v]);
+            }
+        }
+
+        vector<int> tour;
+        vector<bool> visited(n, false);
+        function<void(int)> dfs = [&](int u) {
+            visited[u] = true;
+            tour.push_back(u);
+            for (int v : adj[u]) if (!visited[v]) dfs(v);
+        };
+
+        dfs(start);
+        tour.push_back(start);
+
+        return {calculateTourCost(W, tour), tour};
+    }
+};
+
+// 6. Savings Algorithm (Clarke-Wright)
 class SavingsAlgorithm : public TSPSolver {
 public:
     using TSPSolver::TSPSolver;
@@ -547,14 +604,15 @@ public:
         
         // Ensure validity
         if (!isValidTour(tour, n)) {
-            return buildValidTourDFS(W, start), calculateTourCost(W, buildValidTourDFS(W, start));
+            vector<int> fallback = buildValidTourDFS(W, start);
+            return {calculateTourCost(W, fallback), fallback};
         }
         
         return {calculateTourCost(W, tour), tour};
     }
 };
 
-// 6. Sweep Algorithm (for geometric-like problems)
+// 7. Sweep Algorithm (for geometric-like problems)
 class SweepAlgorithm : public TSPSolver {
 public:
     using TSPSolver::TSPSolver;
@@ -594,7 +652,7 @@ public:
     }
 };
 
-// 7. Lin-Kernighan inspired k-opt (simplified)
+// 8. Lin-Kernighan inspired k-opt (simplified)
 class KOptSolver : public TSPSolver {
 public:
     using TSPSolver::TSPSolver;
@@ -637,7 +695,7 @@ public:
     }
 };
 
-// 8. DFS with intelligent backtracking
+// 9. DFS with intelligent backtracking
 class IntelligentDFS : public TSPSolver {
 public:
     using TSPSolver::TSPSolver;
@@ -821,12 +879,17 @@ int tsp_solve(const Matrix& w) {
     // Always use core algorithms
     algorithms.push_back(make_unique<RobustNearestNeighbor>(w));
     algorithms.push_back(make_unique<TwoStepGreedySolver>(w));
-    algorithms.push_back(make_unique<InsertionSolver>(w));
+    if (n <= 3000) {
+        algorithms.push_back(make_unique<InsertionSolver>(w));
+    } else {
+        algorithms.push_back(make_unique<DoubleTreeSolver>(w));
+    }
     
     // Add specialized algorithms based on graph properties
     if (n <= 1000) {
         algorithms.push_back(make_unique<ChristofidesInspired>(w));
         algorithms.push_back(make_unique<SavingsAlgorithm>(w));
+        algorithms.push_back(make_unique<DoubleTreeSolver>(w));
         
         if (!isSparse) {
             algorithms.push_back(make_unique<SweepAlgorithm>(w));
