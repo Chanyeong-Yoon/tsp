@@ -55,6 +55,73 @@ public:
     pair<long long, vector<int>> solve(int start = 0) override;
 };
 
+class DynamicProgrammingSolver : public TSPSolver {
+public:
+    using TSPSolver::TSPSolver;
+    pair<long long, vector<int>> solve(int start = 0) override {
+        if (n > 20) return {LLONG_MAX, {}};
+
+        int N = 1 << n;
+        vector<vector<long long>> dp(N, vector<long long>(n, LLONG_MAX));
+        vector<vector<int>> parent(N, vector<int>(n, -1));
+
+        dp[1 << start][start] = 0;
+
+        for (int mask = 0; mask < N; ++mask) {
+            for (int u = 0; u < n; ++u) {
+                if (!(mask & (1 << u))) continue;
+                long long cur = dp[mask][u];
+                if (cur == LLONG_MAX) continue;
+                for (int v = 0; v < n; ++v) {
+                    if (mask & (1 << v)) continue;
+                    if (W[u][v] >= INF) continue;
+                    int nm = mask | (1 << v);
+                    long long nc = cur + W[u][v];
+                    if (nc < dp[nm][v]) {
+                        dp[nm][v] = nc;
+                        parent[nm][v] = u;
+                    }
+                }
+            }
+        }
+
+        int full = N - 1;
+        long long bestCost = LLONG_MAX;
+        int last = -1;
+        for (int u = 0; u < n; ++u) {
+            if (u == start) continue;
+            if (dp[full][u] == LLONG_MAX) continue;
+            if (W[u][start] >= INF) continue;
+            long long cost = dp[full][u] + W[u][start];
+            if (cost < bestCost) {
+                bestCost = cost;
+                last = u;
+            }
+        }
+
+        if (last == -1) return {LLONG_MAX, {}};
+
+        vector<int> path;
+        int mask = full;
+        int cur = last;
+        while (cur != start) {
+            path.push_back(cur);
+            int p = parent[mask][cur];
+            mask ^= (1 << cur);
+            cur = p;
+        }
+
+        reverse(path.begin(), path.end());
+        vector<int> tour;
+        tour.reserve(n + 1);
+        tour.push_back(start);
+        tour.insert(tour.end(), path.begin(), path.end());
+        tour.push_back(start);
+
+        return {bestCost, tour};
+    }
+};
+
 int main(int argc, char* argv[]) {
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
@@ -83,20 +150,18 @@ long long calculatePenalty(int n) {
 
 long long calculateTourCost(const Matrix& W, const vector<int>& tour) {
     if (tour.empty()) return LLONG_MAX;
-    
+
     int n = W.size();
-    long long penalty = calculatePenalty(n);
     long long cost = 0;
-    
+
     for (size_t i = 0; i + 1 < tour.size(); ++i) {
         int u = tour[i], v = tour[i + 1];
         if (u < 0 || u >= n || v < 0 || v >= n) return LLONG_MAX;
-        
-        long long edgeCost = (W[u][v] < INF) ? W[u][v] : penalty;
-        if (cost > LLONG_MAX - edgeCost) return LLONG_MAX;
-        cost += edgeCost;
+        if (W[u][v] >= INF) return LLONG_MAX; // edge does not exist
+        cost += W[u][v];
+        if (cost > LLONG_MAX / 2) return LLONG_MAX;
     }
-    
+
     return cost;
 }
 
@@ -116,6 +181,18 @@ bool validateTour(const vector<int>& tour, int n) {
         if (!visited[i]) return false;
     }
     
+    return true;
+}
+
+bool validateHamiltonian(const Matrix& W, const vector<int>& tour) {
+    int n = W.size();
+    if (!validateTour(tour, n)) return false;
+    long long cost = 0;
+    for (size_t i = 0; i + 1 < tour.size(); ++i) {
+        int u = tour[i], v = tour[i + 1];
+        if (W[u][v] >= INF) return false;
+        cost += W[u][v];
+    }
     return true;
 }
 
@@ -573,7 +650,7 @@ public:
         tour.push_back(start);
         
         // Ensure validity
-        if (!validateTour(tour, n)) {
+        if (!validateHamiltonian(W, tour)) {
             return NearestNeighborSolver(W).solve(start);
         }
         
@@ -670,7 +747,7 @@ public:
         
         tour.push_back(start);
         
-        if (!validateTour(tour, n)) {
+        if (!validateHamiltonian(W, tour)) {
             return NearestNeighborSolver(W).solve(start);
         }
         
@@ -774,7 +851,7 @@ public:
         
         tour.push_back(start);
         
-        if (!validateTour(tour, n)) {
+        if (!validateHamiltonian(W, tour)) {
             return NearestNeighborSolver(W).solve(start);
         }
         
@@ -823,7 +900,7 @@ public:
 // 2-opt improvement
 pair<long long, vector<int>> improveWith2Opt(const Matrix& W, vector<int> tour, long long currentCost) {
     int n = W.size();
-    if (!validateTour(tour, n)) return {currentCost, tour};
+    if (!validateHamiltonian(W, tour)) return {currentCost, tour};
     
     vector<int> bestTour = tour;
     long long bestCost = currentCost;
@@ -875,7 +952,11 @@ int tsp_solve(const Matrix& w) {
     
     // Determine which algorithms to use based on graph size
     vector<pair<string, TSPSolver*>> algorithms;
-    
+
+    if (n <= 12) {
+        algorithms.push_back({"DynamicProgramming", new DynamicProgrammingSolver(w)});
+    }
+
     // Always use these core algorithms
     algorithms.push_back({"NearestNeighbor", new NearestNeighborSolver(w)});
     algorithms.push_back({"TwoStepGreedy", new TwoStepGreedySolver(w)});
@@ -912,7 +993,7 @@ int tsp_solve(const Matrix& w) {
         for (int start : starts) {
             try {
                 auto [cost, tour] = solver->solve(start);
-                if (validateTour(tour, n) && cost < best.first) {
+                if (validateHamiltonian(w, tour) && cost < best.first) {
                     best = {cost, tour};
                 }
             } catch (...) {
@@ -926,17 +1007,29 @@ int tsp_solve(const Matrix& w) {
     }
     
     // Apply 2-opt improvement
-    if (!best.second.empty() && validateTour(best.second, n) && n <= 1000) {
+    if (!best.second.empty() && validateHamiltonian(w, best.second) && n <= 1000) {
         auto improved = improveWith2Opt(w, best.second, best.first);
-        if (validateTour(improved.second, n) && improved.first <= best.first) {
+        if (validateHamiltonian(w, improved.second) && improved.first <= best.first) {
             best = improved;
         }
     }
     
     // Ultimate fallback
-    if (best.second.empty() || !validateTour(best.second, n)) {
-        best.second = constructGuaranteedValidTour(n, 0);
-        best.first = calculateTourCost(w, best.second);
+    if (best.second.empty() || !validateHamiltonian(w, best.second)) {
+        auto fallback = NearestNeighborSolver(w).solve(0);
+        if (validateHamiltonian(w, fallback.second)) {
+            best = fallback;
+        } else if (n <= 12) {
+            auto exact = DynamicProgrammingSolver(w).solve(0);
+            if (validateHamiltonian(w, exact.second)) best = exact;
+            else {
+                best.second = {};
+                best.first = LLONG_MAX;
+            }
+        } else {
+            best.second = {};
+            best.first = LLONG_MAX;
+        }
     }
     
     // Clean up
